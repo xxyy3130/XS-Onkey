@@ -14,6 +14,7 @@ readonly SUB_FILE="$BASE_DIR/subscription.txt"
 readonly XRAY_BIN="/usr/local/bin/xray"
 readonly SING_BIN="/usr/local/bin/sing-box"
 readonly MANAGER_BIN="/usr/local/sbin/xs-onekey"
+readonly INSTALL_URL="https://raw.githubusercontent.com/xxyy3130/XS-Onkey/main/install.sh"
 readonly BBR_CONF="/etc/sysctl.d/99-xs-onekey-bbr.conf"
 readonly BBR_STATE_DIR="/var/lib/xs-onekey-bbr"
 readonly BBR_PREVIOUS="$BBR_STATE_DIR/previous.conf"
@@ -767,64 +768,27 @@ services_active() {
   [[ $NEED_SING == false ]] || systemctl is-active --quiet xs-onekey-sing-box.service || return 1
 }
 
-write_runtime_manager() {
-  local tmp name line source function_source extdebug_was=false variable
-  local -a functions=()
-  shopt -q extdebug && extdebug_was=true
-  shopt -s extdebug
-
-  # `declare -F` without a function argument may list names only. Query each
-  # function separately so extdebug reliably includes its source file.
-  read -r _ line function_source < <(declare -F main)
-  if [[ -n ${function_source:-} ]]; then
-    while IFS= read -r name; do
-      read -r _ line source < <(declare -F "$name") || continue
-      [[ $source == "$function_source" ]] && functions+=("$name")
-    done < <(compgen -A function)
-  fi
-  [[ $extdebug_was == true ]] || shopt -u extdebug
-  ((${#functions[@]})) || return 1
-
-  tmp=$(mktemp /tmp/xs-onekey-manager.XXXXXX) || return 1
-  {
-    cat <<'EOF'
-#!/usr/bin/env bash
-set -Eeuo pipefail
-IFS=$'\n\t'
-EOF
-    for variable in BASE_DIR ENV_FILE XRAY_CONFIG SING_CONFIG SHARE_FILE SUB_FILE XRAY_BIN SING_BIN MANAGER_BIN BBR_CONF BBR_STATE_DIR BBR_PREVIOUS RED GREEN YELLOW CYAN NC; do
-      declare -p "$variable"
-    done
-    cat <<'EOF'
-INSTALL_COMPLETED=false
-UNINSTALL_COMPLETED=false
-INSTALL_IN_PROGRESS=false
-XRAY_PREEXISTED=false
-SING_PREEXISTED=false
-declare -A RESERVED_PORTS=()
-RANDOM_PORT_RESULT=''
-EOF
-    for name in "${functions[@]}"; do declare -f "$name"; done
-    cat <<'EOF'
-trap 'on_error "$LINENO" "$BASH_COMMAND"' ERR
-if [[ ${BASH_SOURCE[0]} == "$0" ]]; then main "$@"; fi
-EOF
-  } >"$tmp"
-  if ! bash -n "$tmp" || ! bash -c 'source "$1"; declare -F main menu >/dev/null' _ "$tmp"; then
-    rm -f "$tmp"
-    return 1
-  fi
-  install -m 0755 "$tmp" "$MANAGER_BIN"
-  rm -f "$tmp"
-}
-
 install_self() {
-  local source=${BASH_SOURCE[0]}
+  local source=${BASH_SOURCE[0]} tmp first_line=''
   if [[ -f $source ]]; then
     install -m 0755 "$source" "$MANAGER_BIN"
   else
-    log "检测到进程替换运行方式，正在生成本地管理脚本。"
-    write_runtime_manager || die "无法从当前进程生成管理命令。"
+    log "检测到进程替换运行方式，正在下载本地管理脚本。"
+    tmp=$(mktemp /tmp/xs-onekey-manager.XXXXXX) || die "无法创建管理脚本临时文件。"
+    if ! curl -fsSL --retry 3 --connect-timeout 15 "$INSTALL_URL" -o "$tmp"; then
+      rm -f "$tmp"
+      die "无法从项目地址下载管理脚本。"
+    fi
+    IFS= read -r first_line <"$tmp" || true
+    if [[ $first_line != '#!/usr/bin/env bash' ]] || ! grep -q '^main() {' "$tmp" || ! bash -n "$tmp"; then
+      rm -f "$tmp"
+      die "下载的管理脚本校验失败。"
+    fi
+    if ! install -m 0755 "$tmp" "$MANAGER_BIN"; then
+      rm -f "$tmp"
+      die "无法安装本地管理脚本。"
+    fi
+    rm -f "$tmp"
   fi
 }
 
