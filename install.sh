@@ -280,8 +280,8 @@ expand_protocols() {
   for token in "${requested[@]}"; do
     case "$token" in
       vless) token='vless-reality-vision,vless-xhttp-reality-enc,vless-xhttp,vless-tcp-tls,vless-xhttp-tls' ;;
-      xray) token='vless,hy2,trojan,socks'; token=$(expand_protocols "$token") ;;
-      sing) token='tuic,anytls,any-reality,ss2022' ;;
+      xray) token='vless,trojan,socks'; token=$(expand_protocols "$token") ;;
+      sing) token='hy2,tuic,anytls,any-reality,ss2022' ;;
       all) token='vless,hy2,tuic,anytls,any-reality,ss2022,trojan,socks'; token=$(expand_protocols "$token") ;;
     esac
     expanded=${expanded:+$expanded,}$token
@@ -362,8 +362,8 @@ determine_cores() {
   IFS=',' read -r -a requested <<<"$PROTOCOLS"
   for item in "${requested[@]}"; do
     case "$item" in
-      tuic|anytls|any-reality|ss2022) NEED_SING=true ;;
-      vless-*|hy2|trojan|socks) NEED_XRAY=true ;;
+      hy2|tuic|anytls|any-reality|ss2022) NEED_SING=true ;;
+      vless-*|trojan|socks) NEED_XRAY=true ;;
     esac
   done
   [[ $NEED_XRAY == true ]] && CORE_SUMMARY=Xray || CORE_SUMMARY=''
@@ -611,7 +611,6 @@ write_xray_config() {
   if csv_has vless-tcp-tls; then stream=$(jq -cn --argjson t "$tls" '{network:"raw",security:"tls",tlsSettings:$t,rawSettings:{header:{type:"none"}}}'); obj=$(xray_vless_object vless-tcp-tls "$VLESS_TCP_TLS_PORT" xtls-rprx-vision none "$stream"); xray_add "$obj"; fi
   if csv_has vless-xhttp-tls; then stream=$(jq -cn --argjson t "$tls" --arg path "$PATH_VLESS_XHTTP_TLS" '{network:"xhttp",security:"tls",tlsSettings:$t,xhttpSettings:{path:$path,mode:"auto"}}'); obj=$(xray_vless_object vless-xhttp-tls "$VLESS_XHTTP_TLS_PORT" '' none "$stream"); xray_add "$obj"; fi
 
-  if csv_has hy2; then stream=$(jq -cn --argjson t "$(tls_json '["h3"]')" '{network:"hysteria",security:"tls",tlsSettings:$t,hysteriaSettings:{version:2}}'); obj=$(jq -cn --arg listen "$LISTEN_ADDR" --argjson port "$HY2_PORT" --arg pass "$HY2_PASSWORD" --argjson stream "$stream" '{tag:"hy2",listen:$listen,port:$port,protocol:"hysteria",settings:{version:2,users:[{auth:$pass,email:"hy2"}]},streamSettings:$stream}'); xray_add "$obj"; fi
   if csv_has trojan; then stream=$(jq -cn --argjson t "$(tls_json '["http/1.1"]')" '{network:"raw",security:"tls",tlsSettings:$t,rawSettings:{header:{type:"none"}}}'); obj=$(jq -cn --arg listen "$LISTEN_ADDR" --argjson port "$TROJAN_PORT" --arg pass "$TROJAN_PASSWORD" --argjson stream "$stream" '{tag:"trojan",listen:$listen,port:$port,protocol:"trojan",settings:{clients:[{password:$pass,email:"trojan"}]},streamSettings:$stream}'); xray_add "$obj"; fi
   if csv_has socks; then obj=$(jq -cn --arg listen "$LISTEN_ADDR" --argjson port "$SOCKS_PORT" --arg user "$SOCKS_USER" --arg pass "$SOCKS_PASSWORD" '{tag:"socks",listen:$listen,port:$port,protocol:"socks",settings:{auth:"password",accounts:[{user:$user,pass:$pass}],udp:true}}'); xray_add "$obj"; fi
   chmod 0600 "$XRAY_CONFIG"
@@ -630,6 +629,7 @@ write_sing_config() {
   local tls reality obj
   tls=$(jq -cn --arg sni "$SNI" --arg cert "$CERT_FILE" --arg key "$KEY_FILE" '{enabled:true,server_name:$sni,certificate_path:$cert,key_path:$key}')
   reality=$(jq -cn --arg sni "$SNI" --arg key "$REALITY_PRIVATE" --arg sid "$REALITY_SHORT_ID" '{enabled:true,server_name:$sni,reality:{enabled:true,handshake:{server:$sni,server_port:443},private_key:$key,short_id:[$sid]}}')
+  if csv_has hy2; then obj=$(jq -cn --arg listen "$LISTEN_ADDR" --argjson port "$HY2_PORT" --arg pass "$HY2_PASSWORD" --argjson tls "$tls" '{type:"hysteria2",tag:"hy2",listen:$listen,listen_port:$port,users:[{name:"xs-onkey",password:$pass}],tls:($tls+{alpn:["h3"]})}'); sing_add "$obj"; fi
   if csv_has tuic; then obj=$(jq -cn --arg listen "$LISTEN_ADDR" --argjson port "$TUIC_PORT" --arg uuid "$TUIC_UUID" --arg pass "$TUIC_PASSWORD" --argjson tls "$tls" '{type:"tuic",tag:"tuic",listen:$listen,listen_port:$port,users:[{name:"xs-onekey",uuid:$uuid,password:$pass}],congestion_control:"bbr",zero_rtt_handshake:false,heartbeat:"10s",tls:($tls+{alpn:["h3"]})}'); sing_add "$obj"; fi
   if csv_has anytls; then obj=$(jq -cn --arg listen "$LISTEN_ADDR" --argjson port "$ANYTLS_PORT" --arg pass "$ANYTLS_PASSWORD" --argjson tls "$tls" '{type:"anytls",tag:"anytls",listen:$listen,listen_port:$port,users:[{name:"xs-onekey",password:$pass}],tls:$tls}'); sing_add "$obj"; fi
   if csv_has any-reality; then obj=$(jq -cn --arg listen "$LISTEN_ADDR" --argjson port "$ANY_REALITY_PORT" --arg pass "$ANY_REALITY_PASSWORD" --argjson reality "$reality" '{type:"anytls",tag:"any-reality",listen:$listen,listen_port:$port,users:[{name:"xs-onekey",password:$pass}],tls:$reality}'); sing_add "$obj"; fi
@@ -643,7 +643,7 @@ generate_links() {
   [[ $TLS_INSECURE == true ]] && insecure_num=1 || insecure_num=0
   if [[ $TLS_MODE == selfsigned ]]; then
     xray_pin_query="&pcs=${CERT_SHA256}"
-    hy2_pin_query="&pinSHA256=${CERT_SHA256}&pcs=${CERT_SHA256}"
+    hy2_pin_query="&pinSHA256=${CERT_SHA256}"
   fi
   : >"$SHARE_FILE"
   csv_has vless-reality-vision && printf 'vless://%s@%s:%s?encryption=none&flow=xtls-rprx-vision&security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&type=tcp#%s-VLESS-Reality-Vision\n' "$UUID" "$host" "$VLESS_REALITY_VISION_PORT" "$SNI" "$REALITY_PUBLIC" "$REALITY_SHORT_ID" "$label" >>"$SHARE_FILE"
@@ -653,7 +653,7 @@ generate_links() {
   csv_has vless-xhttp-tls && printf 'vless://%s@%s:%s?encryption=none&security=tls&sni=%s&type=xhttp&mode=auto&path=%s%s#%s-VLESS-XHTTP-TLS\n' "$UUID" "$host" "$VLESS_XHTTP_TLS_PORT" "$SNI" "$PATH_VLESS_XHTTP_TLS" "$xray_pin_query" "$label" >>"$SHARE_FILE"
 
   csv_has trojan && printf 'trojan://%s@%s:%s?security=tls&sni=%s%s#%s-Trojan\n' "$TROJAN_PASSWORD" "$host" "$TROJAN_PORT" "$SNI" "$xray_pin_query" "$label" >>"$SHARE_FILE"
-  csv_has hy2 && printf 'hysteria2://%s@%s:%s?security=tls&sni=%s&alpn=h3%s#%s-Hysteria2\n' "$HY2_PASSWORD" "$host" "$HY2_PORT" "$SNI" "$hy2_pin_query" "$label" >>"$SHARE_FILE"
+  csv_has hy2 && printf 'hysteria2://%s@%s:%s/?sni=%s&insecure=%s%s#%s-Hysteria2\n' "$HY2_PASSWORD" "$host" "$HY2_PORT" "$SNI" "$insecure_num" "$hy2_pin_query" "$label" >>"$SHARE_FILE"
   csv_has tuic && printf 'tuic://%s:%s@%s:%s?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=%s&allow_insecure=%s#%s-TUIC\n' "$TUIC_UUID" "$TUIC_PASSWORD" "$host" "$TUIC_PORT" "$SNI" "$insecure_num" "$label" >>"$SHARE_FILE"
   csv_has anytls && printf 'anytls://%s@%s:%s?security=tls&sni=%s&insecure=%s#%s-AnyTLS\n' "$ANYTLS_PASSWORD" "$host" "$ANYTLS_PORT" "$SNI" "$insecure_num" "$label" >>"$SHARE_FILE"
   csv_has any-reality && printf 'anytls://%s@%s:%s?security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s#%s-AnyTLS-Reality\n' "$ANY_REALITY_PASSWORD" "$host" "$ANY_REALITY_PORT" "$SNI" "$REALITY_PUBLIC" "$REALITY_SHORT_ID" "$label" >>"$SHARE_FILE"
