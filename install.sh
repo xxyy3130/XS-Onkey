@@ -1144,7 +1144,7 @@ uninstall_all() {
 menu() {
   local choice
   while true; do
-    printf '\n%bBoxRay 一键部署脚本%b\n1) 一键安装\n2) 删除卸载\n3) 重启服务\n4) 启动服务\n5) 停止服务\n6) 更新核心\n7) 查看节点\n8) BBR\n0) 退出\n' "$CYAN" "$NC"
+    printf '\n%bXS-Onkey 一键部署脚本%b\n1) 一键安装\n2) 删除卸载\n3) 重启服务\n4) 启动服务\n5) 停止服务\n6) 更新核心\n7) 查看节点\n8) BBR\n0) 退出\n' "$CYAN" "$NC"
     read -r -p '请选择: ' choice
     case "$choice" in
       1) install_all; if [[ $INSTALL_COMPLETED == true ]]; then exit 0; fi ;;
