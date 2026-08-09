@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# BoxRay - Xray / sing-box multi-protocol one-click deployment script
+# XS-Onkey - Xray / sing-box multi-protocol one-click deployment script
 # No Argo, WARP, Cloudflare, CDN or cloudflared integration.
 
 set -Eeuo pipefail
@@ -24,18 +24,18 @@ UNINSTALL_COMPLETED=false
 INSTALL_IN_PROGRESS=false
 XRAY_PREEXISTED=false
 SING_PREEXISTED=false
-log()  { printf "%b[boxray]%b %s\n" "$CYAN" "$NC" "$*"; }
-ok()   { printf "%b[boxray]%b %s\n" "$GREEN" "$NC" "$*"; }
-warn() { printf "%b[boxray] 警告:%b %s\n" "$YELLOW" "$NC" "$*" >&2; }
+log()  { printf "%b[xs-onkey]%b %s\n" "$CYAN" "$NC" "$*"; }
+ok()   { printf "%b[xs-onkey]%b %s\n" "$GREEN" "$NC" "$*"; }
+warn() { printf "%b[xs-onkey] 警告:%b %s\n" "$YELLOW" "$NC" "$*" >&2; }
 die()  {
-  printf "%b[boxray] 错误:%b %s\n" "$RED" "$NC" "$*" >&2
+  printf "%b[xs-onkey] 错误:%b %s\n" "$RED" "$NC" "$*" >&2
   cleanup_partial_install
   exit 1
 }
 on_error() {
   local status=$?
   local line=$1 command=$2
-  printf "%b[boxray] 错误:%b 第 %s 行命令失败（状态 %s）：%s\n" "$RED" "$NC" "$line" "$status" "$command" >&2
+  printf "%b[xs-onkey] 错误:%b 第 %s 行命令失败（状态 %s）：%s\n" "$RED" "$NC" "$line" "$status" "$command" >&2
   cleanup_partial_install
   exit "$status"
 }
@@ -702,7 +702,7 @@ write_services() {
   if [[ $NEED_XRAY == true ]]; then
     cat >/etc/systemd/system/xs-onekey-xray.service <<EOF
 [Unit]
-Description=BoxRay Xray Service
+Description=XS-Onkey Xray Service
 After=network-online.target
 Wants=network-online.target
 [Service]
@@ -724,7 +724,7 @@ EOF
   if [[ $NEED_SING == true ]]; then
     cat >/etc/systemd/system/xs-onekey-sing-box.service <<EOF
 [Unit]
-Description=BoxRay sing-box Service
+Description=XS-Onkey sing-box Service
 After=network-online.target
 Wants=network-online.target
 [Service]
@@ -768,13 +768,20 @@ services_active() {
 }
 
 write_runtime_manager() {
-  local script_source=${BASH_SOURCE[0]} tmp name line source extdebug_was=false variable
+  local tmp name line source function_source extdebug_was=false variable
   local -a functions=()
   shopt -q extdebug && extdebug_was=true
   shopt -s extdebug
-  while read -r name line source; do
-    [[ $source == "$script_source" ]] && functions+=("$name")
-  done < <(declare -F)
+
+  # `declare -F` without a function argument may list names only. Query each
+  # function separately so extdebug reliably includes its source file.
+  read -r _ line function_source < <(declare -F main)
+  if [[ -n ${function_source:-} ]]; then
+    while IFS= read -r name; do
+      read -r _ line source < <(declare -F "$name") || continue
+      [[ $source == "$function_source" ]] && functions+=("$name")
+    done < <(compgen -A function)
+  fi
   [[ $extdebug_was == true ]] || shopt -u extdebug
   ((${#functions[@]})) || return 1
 
@@ -803,6 +810,10 @@ trap 'on_error "$LINENO" "$BASH_COMMAND"' ERR
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then main "$@"; fi
 EOF
   } >"$tmp"
+  if ! bash -n "$tmp" || ! bash -c 'source "$1"; declare -F main menu >/dev/null' _ "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
   install -m 0755 "$tmp" "$MANAGER_BIN"
   rm -f "$tmp"
 }
@@ -1020,7 +1031,7 @@ bbr_restore() {
     rm -f "$BBR_PREVIOUS"
   fi
   rmdir "$BBR_STATE_DIR" >/dev/null 2>&1 || true
-  [[ $quiet == true ]] || { ok "已移除 BoxRay BBR 配置并恢复启用前参数。"; bbr_status; }
+  [[ $quiet == true ]] || { ok "已移除 XS-Onkey BBR 配置并恢复启用前参数。"; bbr_status; }
 }
 
 keep_higher_sysctl_value() {
@@ -1066,7 +1077,7 @@ bbr_enable() {
   bbr_save_previous
   tmp=$(mktemp /tmp/xs-onekey-bbr.XXXXXX)
   cat >"$tmp" <<EOF
-# BoxRay BBR/FQ network tuning; generated automatically.
+# XS-Onkey BBR/FQ network tuning; generated automatically.
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 net.core.rmem_max = $buffer_max
@@ -1158,7 +1169,7 @@ menu() {
 }
 
 main() {
-  [[ $# -eq 0 ]] || die "本脚本不接受命令行参数，请直接运行：./xs-onekey.sh"
+  [[ $# -eq 0 ]] || die "本脚本不接受命令行参数，请直接运行 install.sh 或 xs-onekey 管理命令。"
   [[ -t 0 ]] || die "本脚本仅支持交互终端运行。"
   menu
 }
