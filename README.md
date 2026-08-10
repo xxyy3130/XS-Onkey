@@ -4,8 +4,8 @@ xray/sing-box 一键快速安装脚本
 
 ## 快速安装
 
-```bash
-bash <(curl -Ls https://raw.githubusercontent.com/xxyy3130/XS-Onkey/main/install.sh)
+```
+wget -O install.sh "https://raw.githubusercontent.com/xxyy3130/XS-Onkey/main/install.sh" && chmod +x install.sh && ./install.sh
 ```
 
 ## 协议矩阵
