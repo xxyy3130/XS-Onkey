@@ -14,7 +14,6 @@ readonly SUB_FILE="$BASE_DIR/subscription.txt"
 readonly XRAY_BIN="/usr/local/bin/xray"
 readonly SING_BIN="/usr/local/bin/sing-box"
 readonly MANAGER_BIN="/usr/local/sbin/xs-onekey"
-readonly INSTALL_URL="https://raw.githubusercontent.com/xxyy3130/XS-Onkey/main/install.sh"
 readonly BBR_CONF="/etc/sysctl.d/99-xs-onekey-bbr.conf"
 readonly BBR_STATE_DIR="/var/lib/xs-onekey-bbr"
 readonly BBR_PREVIOUS="$BBR_STATE_DIR/previous.conf"
@@ -25,6 +24,8 @@ UNINSTALL_COMPLETED=false
 INSTALL_IN_PROGRESS=false
 XRAY_PREEXISTED=false
 SING_PREEXISTED=false
+HY2_CORE=xray
+SOCKS_CORE=xray
 log()  { printf "%b[xs-onkey]%b %s\n" "$CYAN" "$NC" "$*"; }
 ok()   { printf "%b[xs-onkey]%b %s\n" "$GREEN" "$NC" "$*"; }
 warn() { printf "%b[xs-onkey] 警告:%b %s\n" "$YELLOW" "$NC" "$*" >&2; }
@@ -356,19 +357,44 @@ select_protocols() {
   validate_protocols
 }
 
+prompt_optional_core() {
+  local label=$1 variable=$2 choice=''
+  while true; do
+    printf '\n%s 核心：\n 1) Xray（默认）\n 2) sing-box\n' "$label"
+    read -r -p '请选择 [1]: ' choice
+    case "${choice,,}" in
+      ''|1|xray) printf -v "$variable" '%s' xray; return 0 ;;
+      2|sing|sing-box) printf -v "$variable" '%s' sing-box; return 0 ;;
+      *) warn "无效选择，请输入 1 或 2。" ;;
+    esac
+  done
+}
+
+select_optional_cores() {
+  HY2_CORE=xray
+  SOCKS_CORE=xray
+  csv_has hy2 && prompt_optional_core Hysteria2 HY2_CORE
+  csv_has socks && prompt_optional_core Socks5 SOCKS_CORE
+  return 0
+}
+
 determine_cores() {
   NEED_XRAY=false; NEED_SING=false
   local item
   IFS=',' read -r -a requested <<<"$PROTOCOLS"
   for item in "${requested[@]}"; do
     case "$item" in
-      hy2|tuic|anytls|any-reality|ss2022) NEED_SING=true ;;
-      vless-*|trojan|socks) NEED_XRAY=true ;;
+      hy2) [[ $HY2_CORE == xray ]] && NEED_XRAY=true || NEED_SING=true ;;
+      socks) [[ $SOCKS_CORE == xray ]] && NEED_XRAY=true || NEED_SING=true ;;
+      tuic|anytls|any-reality|ss2022) NEED_SING=true ;;
+      vless-*|trojan) NEED_XRAY=true ;;
     esac
   done
   [[ $NEED_XRAY == true ]] && CORE_SUMMARY=Xray || CORE_SUMMARY=''
   [[ $NEED_SING == true ]] && CORE_SUMMARY=${CORE_SUMMARY:+$CORE_SUMMARY+}sing-box
   log "协议选择：$PROTOCOLS"
+  csv_has hy2 && log "Hysteria2 核心：$HY2_CORE"
+  csv_has socks && log "Socks5 核心：$SOCKS_CORE"
   log "核心计划：$CORE_SUMMARY"
 }
 
@@ -578,7 +604,7 @@ generate_credentials() {
 
 write_env() {
   umask 077
-  local vars=(SERVER_ADDR LISTEN_ADDR PROTOCOLS NEED_XRAY NEED_SING CORE_SUMMARY TLS_REQUIRED REALITY_REQUIRED VLESS_ENC_REQUIRED UUID_REQUIRED TLS_MODE DOMAIN ACME_EMAIL SNI TLS_INSECURE CERT_FILE KEY_FILE CERT_SHA256 UUID TUIC_UUID TROJAN_PASSWORD HY2_PASSWORD TUIC_PASSWORD ANYTLS_PASSWORD ANY_REALITY_PASSWORD SOCKS_USER SOCKS_PASSWORD SS2022_PASSWORD REALITY_SHORT_ID REALITY_PRIVATE REALITY_PUBLIC VLESS_XHTTP_REALITY_DECRYPTION VLESS_XHTTP_REALITY_ENCRYPTION VLESS_XHTTP_DECRYPTION VLESS_XHTTP_ENCRYPTION PATH_VLESS_XHTTP_REALITY_ENC PATH_VLESS_XHTTP PATH_VLESS_XHTTP_TLS VLESS_REALITY_VISION_PORT VLESS_XHTTP_REALITY_ENC_PORT VLESS_XHTTP_PORT VLESS_TCP_TLS_PORT VLESS_XHTTP_TLS_PORT TROJAN_PORT HY2_PORT TUIC_PORT ANYTLS_PORT ANY_REALITY_PORT SS2022_PORT SOCKS_PORT)
+  local vars=(SERVER_ADDR LISTEN_ADDR PROTOCOLS HY2_CORE SOCKS_CORE NEED_XRAY NEED_SING CORE_SUMMARY TLS_REQUIRED REALITY_REQUIRED VLESS_ENC_REQUIRED UUID_REQUIRED TLS_MODE DOMAIN ACME_EMAIL SNI TLS_INSECURE CERT_FILE KEY_FILE CERT_SHA256 UUID TUIC_UUID TROJAN_PASSWORD HY2_PASSWORD TUIC_PASSWORD ANYTLS_PASSWORD ANY_REALITY_PASSWORD SOCKS_USER SOCKS_PASSWORD SS2022_PASSWORD REALITY_SHORT_ID REALITY_PRIVATE REALITY_PUBLIC VLESS_XHTTP_REALITY_DECRYPTION VLESS_XHTTP_REALITY_ENCRYPTION VLESS_XHTTP_DECRYPTION VLESS_XHTTP_ENCRYPTION PATH_VLESS_XHTTP_REALITY_ENC PATH_VLESS_XHTTP PATH_VLESS_XHTTP_TLS VLESS_REALITY_VISION_PORT VLESS_XHTTP_REALITY_ENC_PORT VLESS_XHTTP_PORT VLESS_TCP_TLS_PORT VLESS_XHTTP_TLS_PORT TROJAN_PORT HY2_PORT TUIC_PORT ANYTLS_PORT ANY_REALITY_PORT SS2022_PORT SOCKS_PORT)
   : >"$ENV_FILE"
   local name; for name in "${vars[@]}"; do printf '%s=%q\n' "$name" "${!name}" >>"$ENV_FILE"; done
   chmod 0600 "$ENV_FILE"
@@ -611,8 +637,9 @@ write_xray_config() {
   if csv_has vless-tcp-tls; then stream=$(jq -cn --argjson t "$tls" '{network:"raw",security:"tls",tlsSettings:$t,rawSettings:{header:{type:"none"}}}'); obj=$(xray_vless_object vless-tcp-tls "$VLESS_TCP_TLS_PORT" xtls-rprx-vision none "$stream"); xray_add "$obj"; fi
   if csv_has vless-xhttp-tls; then stream=$(jq -cn --argjson t "$tls" --arg path "$PATH_VLESS_XHTTP_TLS" '{network:"xhttp",security:"tls",tlsSettings:$t,xhttpSettings:{path:$path,mode:"auto"}}'); obj=$(xray_vless_object vless-xhttp-tls "$VLESS_XHTTP_TLS_PORT" '' none "$stream"); xray_add "$obj"; fi
 
+  if csv_has hy2 && [[ $HY2_CORE == xray ]]; then stream=$(jq -cn --argjson t "$(tls_json '["h3"]')" '{network:"hysteria",security:"tls",tlsSettings:($t+{minVersion:"1.3",maxVersion:"1.3"}),hysteriaSettings:{version:2,udpIdleTimeout:60}}'); obj=$(jq -cn --arg listen "$LISTEN_ADDR" --argjson port "$HY2_PORT" --arg pass "$HY2_PASSWORD" --argjson stream "$stream" '{tag:"hy2",listen:$listen,port:$port,protocol:"hysteria",settings:{version:2,users:[{auth:$pass,level:0,email:"hy2"}]},streamSettings:$stream}'); xray_add "$obj"; fi
   if csv_has trojan; then stream=$(jq -cn --argjson t "$(tls_json '["http/1.1"]')" '{network:"raw",security:"tls",tlsSettings:$t,rawSettings:{header:{type:"none"}}}'); obj=$(jq -cn --arg listen "$LISTEN_ADDR" --argjson port "$TROJAN_PORT" --arg pass "$TROJAN_PASSWORD" --argjson stream "$stream" '{tag:"trojan",listen:$listen,port:$port,protocol:"trojan",settings:{clients:[{password:$pass,email:"trojan"}]},streamSettings:$stream}'); xray_add "$obj"; fi
-  if csv_has socks; then obj=$(jq -cn --arg listen "$LISTEN_ADDR" --argjson port "$SOCKS_PORT" --arg user "$SOCKS_USER" --arg pass "$SOCKS_PASSWORD" '{tag:"socks",listen:$listen,port:$port,protocol:"socks",settings:{auth:"password",accounts:[{user:$user,pass:$pass}],udp:true}}'); xray_add "$obj"; fi
+  if csv_has socks && [[ $SOCKS_CORE == xray ]]; then obj=$(jq -cn --arg listen "$LISTEN_ADDR" --argjson port "$SOCKS_PORT" --arg user "$SOCKS_USER" --arg pass "$SOCKS_PASSWORD" '{tag:"socks",listen:$listen,port:$port,protocol:"socks",settings:{auth:"password",accounts:[{user:$user,pass:$pass}],udp:true}}'); xray_add "$obj"; fi
   chmod 0600 "$XRAY_CONFIG"
 }
 
@@ -629,11 +656,12 @@ write_sing_config() {
   local tls reality obj
   tls=$(jq -cn --arg sni "$SNI" --arg cert "$CERT_FILE" --arg key "$KEY_FILE" '{enabled:true,server_name:$sni,certificate_path:$cert,key_path:$key}')
   reality=$(jq -cn --arg sni "$SNI" --arg key "$REALITY_PRIVATE" --arg sid "$REALITY_SHORT_ID" '{enabled:true,server_name:$sni,reality:{enabled:true,handshake:{server:$sni,server_port:443},private_key:$key,short_id:[$sid]}}')
-  if csv_has hy2; then obj=$(jq -cn --arg listen "$LISTEN_ADDR" --argjson port "$HY2_PORT" --arg pass "$HY2_PASSWORD" --argjson tls "$tls" '{type:"hysteria2",tag:"hy2",listen:$listen,listen_port:$port,users:[{name:"xs-onkey",password:$pass}],tls:($tls+{alpn:["h3"]})}'); sing_add "$obj"; fi
+  if csv_has hy2 && [[ $HY2_CORE == sing-box ]]; then obj=$(jq -cn --arg listen "$LISTEN_ADDR" --argjson port "$HY2_PORT" --arg pass "$HY2_PASSWORD" --argjson tls "$tls" '{type:"hysteria2",tag:"hy2",listen:$listen,listen_port:$port,users:[{name:"xs-onkey",password:$pass}],tls:($tls+{alpn:["h3"],min_version:"1.3",max_version:"1.3"})}'); sing_add "$obj"; fi
   if csv_has tuic; then obj=$(jq -cn --arg listen "$LISTEN_ADDR" --argjson port "$TUIC_PORT" --arg uuid "$TUIC_UUID" --arg pass "$TUIC_PASSWORD" --argjson tls "$tls" '{type:"tuic",tag:"tuic",listen:$listen,listen_port:$port,users:[{name:"xs-onekey",uuid:$uuid,password:$pass}],congestion_control:"bbr",zero_rtt_handshake:false,heartbeat:"10s",tls:($tls+{alpn:["h3"]})}'); sing_add "$obj"; fi
   if csv_has anytls; then obj=$(jq -cn --arg listen "$LISTEN_ADDR" --argjson port "$ANYTLS_PORT" --arg pass "$ANYTLS_PASSWORD" --argjson tls "$tls" '{type:"anytls",tag:"anytls",listen:$listen,listen_port:$port,users:[{name:"xs-onekey",password:$pass}],tls:$tls}'); sing_add "$obj"; fi
   if csv_has any-reality; then obj=$(jq -cn --arg listen "$LISTEN_ADDR" --argjson port "$ANY_REALITY_PORT" --arg pass "$ANY_REALITY_PASSWORD" --argjson reality "$reality" '{type:"anytls",tag:"any-reality",listen:$listen,listen_port:$port,users:[{name:"xs-onekey",password:$pass}],tls:$reality}'); sing_add "$obj"; fi
   if csv_has ss2022; then obj=$(jq -cn --arg listen "$LISTEN_ADDR" --argjson port "$SS2022_PORT" --arg pass "$SS2022_PASSWORD" '{type:"shadowsocks",tag:"ss2022",listen:$listen,listen_port:$port,method:"2022-blake3-aes-128-gcm",password:$pass}'); sing_add "$obj"; fi
+  if csv_has socks && [[ $SOCKS_CORE == sing-box ]]; then obj=$(jq -cn --arg listen "$LISTEN_ADDR" --argjson port "$SOCKS_PORT" --arg user "$SOCKS_USER" --arg pass "$SOCKS_PASSWORD" '{type:"socks",tag:"socks",listen:$listen,listen_port:$port,users:[{username:$user,password:$pass}]}'); sing_add "$obj"; fi
   chmod 0600 "$SING_CONFIG"
 }
 
@@ -769,27 +797,9 @@ services_active() {
 }
 
 install_self() {
-  local source=${BASH_SOURCE[0]} tmp first_line=''
-  if [[ -f $source ]]; then
-    install -m 0755 "$source" "$MANAGER_BIN"
-  else
-    log "检测到进程替换运行方式，正在下载本地管理脚本。"
-    tmp=$(mktemp /tmp/xs-onekey-manager.XXXXXX) || die "无法创建管理脚本临时文件。"
-    if ! curl -fsSL --retry 3 --connect-timeout 15 "$INSTALL_URL" -o "$tmp"; then
-      rm -f "$tmp"
-      die "无法从项目地址下载管理脚本。"
-    fi
-    IFS= read -r first_line <"$tmp" || true
-    if [[ $first_line != '#!/usr/bin/env bash' ]] || ! grep -q '^main() {' "$tmp" || ! bash -n "$tmp"; then
-      rm -f "$tmp"
-      die "下载的管理脚本校验失败。"
-    fi
-    if ! install -m 0755 "$tmp" "$MANAGER_BIN"; then
-      rm -f "$tmp"
-      die "无法安装本地管理脚本。"
-    fi
-    rm -f "$tmp"
-  fi
+  local source=${BASH_SOURCE[0]}
+  [[ -f $source ]] || die "只支持运行本地 install.sh 文件。"
+  install -m 0755 "$source" "$MANAGER_BIN"
 }
 
 install_all() {
@@ -797,6 +807,7 @@ install_all() {
   need_root; detect_os
   ! managed_artifacts_available || { warn "检测到现有安装或残留文件；请使用删除卸载后再安装。"; return 0; }
   select_protocols || return 0
+  select_optional_cores
   determine_cores
   set_feature_flags
   [[ -e $XRAY_BIN ]] && XRAY_PREEXISTED=true || XRAY_PREEXISTED=false
@@ -842,6 +853,9 @@ show_info() {
   [[ -s $SHARE_FILE ]] || { warn "没有可显示的节点，已返回主菜单。"; return 0; }
   load_env
   printf '\n%b核心%b  %s\n%b协议档%b  %s\n\n' "$CYAN" "$NC" "$CORE_SUMMARY" "$CYAN" "$NC" "$PROTOCOLS"
+  csv_has hy2 && printf '%bHysteria2 核心%b  %s\n' "$CYAN" "$NC" "$HY2_CORE"
+  csv_has socks && printf '%bSocks5 核心%b  %s\n' "$CYAN" "$NC" "$SOCKS_CORE"
+  { csv_has hy2 || csv_has socks; } && printf '\n'
   [[ -z ${CERT_SHA256:-} ]] || printf '%bTLS 证书 SHA-256%b  %s\n\n' "$CYAN" "$NC" "$CERT_SHA256"
   printf '%b节点信息文件：%s%b\n' "$CYAN" "$SHARE_FILE" "$NC"
   print_share_links
@@ -1133,6 +1147,7 @@ menu() {
 }
 
 main() {
+  [[ -f ${BASH_SOURCE[0]} ]] || die "请先用 wget 下载为本地 install.sh，再运行该文件。"
   [[ $# -eq 0 ]] || die "本脚本不接受命令行参数，请直接运行 install.sh 或 xs-onekey 管理命令。"
   [[ -t 0 ]] || die "本脚本仅支持交互终端运行。"
   menu
